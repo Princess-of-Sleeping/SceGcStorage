@@ -10,6 +10,7 @@
 #include <psp2kern/kernel/iofilemgr.h>
 #include <psp2kern/kernel/sysclib.h>
 #include <psp2kern/kernel/sysroot.h>
+#include <psp2kern/kernel/sysmem.h>
 #include <taihen.h>
 
 #define HookImport(module_name, library_nid, func_nid, func_name) \
@@ -72,6 +73,16 @@ SceIoPartEntry *sceIoGetEmptyPartEntry(SceIoPartEntry *pIoPartEntry){
 	return NULL;
 }
 
+SceIoPartEntry *sceIoSearchPartEntryById(SceIoPartEntry *pIoPartEntry, SceUInt32 mntId){
+
+	for(int i=0;i<0x20;i++){
+		if(pIoPartEntry[i].mount_id == mntId)
+			return &pIoPartEntry[i];
+	}
+
+	return NULL;
+}
+
 /*
  * Genuine SCE sd0: Add entry to enable gamecard sdcard
  */
@@ -86,7 +97,11 @@ int add_sd0_ent(void){
 	sce_info.size = sizeof(sce_info);
 	ksceKernelGetModuleInfo(0x10005, moduleid, &sce_info);
 
-	SceIoPartEntry *pIoNewPart = sceIoGetEmptyPartEntry((SceIoPartEntry *)((uintptr_t)(sce_info.segments[1].vaddr) + 0x1A90));
+	SceIoPartEntry *pIoPartEntryList, *pIoNewPart;
+
+	pIoPartEntryList = (SceIoPartEntry *)((uintptr_t)(sce_info.segments[1].vaddr) + 0x1A90);
+
+	pIoNewPart = sceIoGetEmptyPartEntry(pIoPartEntryList);
 	if(pIoNewPart == NULL)
 		return -1;
 
@@ -99,6 +114,51 @@ int add_sd0_ent(void){
 
 	pIoNewPart->ent[0].config = sce_info.segments[0].vaddr + 0x1D7CC;
 	pIoNewPart->ent[1].config = sce_info.segments[0].vaddr + 0x1D7CC;
+
+	return 0;
+}
+
+int swap_sd0_and_ux0_ent(void){
+
+	SceKernelModuleInfo sce_info;
+	SceUID moduleid;
+
+	moduleid = ksceKernelSearchModuleByName("SceIofilemgr");
+
+	memset(&sce_info, 0, sizeof(sce_info));
+	sce_info.size = sizeof(sce_info);
+	ksceKernelGetModuleInfo(0x10005, moduleid, &sce_info);
+
+	SceIoPartEntry *pIoPartEntryList;
+
+	pIoPartEntryList = (SceIoPartEntry *)((uintptr_t)(sce_info.segments[1].vaddr) + 0x1A90);
+
+	SceIoPartEntry *pIoPartEntrySd0 = sceIoSearchPartEntryById(pIoPartEntryList, 0x100);
+	SceIoPartEntry *pIoPartEntryUx0 = sceIoSearchPartEntryById(pIoPartEntryList, 0x800);
+
+	SceIoPartConfig *pIoPartConfigUx0, *pIoPartConfigSd0;
+
+	pIoPartConfigUx0 = (SceIoPartConfig *)ksceKernelAllocHeapMemory(0x1000B, sizeof(*pIoPartConfigUx0));
+	pIoPartConfigSd0 = (SceIoPartConfig *)ksceKernelAllocHeapMemory(0x1000B, sizeof(*pIoPartConfigSd0));
+	if(pIoPartConfigUx0 == NULL || pIoPartConfigSd0 == NULL)
+		return -1;
+
+	memcpy(pIoPartConfigUx0, pIoPartEntryUx0->ent[0].config, sizeof(*pIoPartConfigUx0));
+	memcpy(pIoPartConfigSd0, pIoPartEntrySd0->ent[0].config, sizeof(*pIoPartConfigSd0));
+
+	pIoPartConfigUx0->device = "sd0:";
+	pIoPartConfigSd0->device = "ux0:";
+
+	pIoPartEntrySd0->ent[0].config = pIoPartConfigSd0;
+	pIoPartEntrySd0->ent[1].config = pIoPartConfigSd0;
+	pIoPartEntryUx0->ent[0].config = pIoPartConfigUx0;
+	pIoPartEntryUx0->ent[1].config = pIoPartConfigUx0;
+
+	ksceIoUmount(0x800, 0, 0, 0);
+	ksceIoUmount(0x100, 0, 0, 0);
+
+	ksceIoMount(0x800, NULL, 0, 0, 0, 0);
+	ksceIoMount(0x100, NULL, 0, 0, 0, 0);
 
 	return 0;
 }
@@ -153,6 +213,8 @@ int module_start(SceSize args, void *argp){
 
 	hook_id[0] = HookImport("SceExfatfs", 0x2ED7F97A, 0x55392965, sceSysrootUseExternalStorage_for_SceExfatfs);
 	hook_id[1] = HookImport("SceSdstor",  0x2ED7F97A, 0x55392965, sceSysrootUseExternalStorage_for_SceSdstor);
+
+	// swap_sd0_and_ux0_ent();
 
 	ksceIoMount(0x100, NULL, 0, 0, 0, 0);
 

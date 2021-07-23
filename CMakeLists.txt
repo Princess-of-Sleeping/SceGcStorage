@@ -22,6 +22,7 @@ add_executable(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME}
+  SceSysmemForDriver_stub
   SceSysclibForDriver_stub
   SceSysrootForDriver_stub
   SceSysrootForKernel_stub
